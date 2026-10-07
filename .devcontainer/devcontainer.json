@@ -1,0 +1,15 @@
+{
+  "name": "Prosody Writer",
+  "build": { "dockerfile": "Dockerfile" },
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Prosody Writer",
+      "onAutoForward": "openPreview",
+      "protocol": "http"
+    }
+  },
+  "postCreateCommand": "bash scripts/setup.sh",
+  "postStartCommand": "bash scripts/start-background.sh",
+  "remoteUser": "vscode"
+}

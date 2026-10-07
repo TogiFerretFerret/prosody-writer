@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prosody Writer</title>
+<link rel="stylesheet" href="/static/style.css">
+<main>
+  <header><span class="eyebrow">A WORKSPACE FOR VERSE</span><h1>Prosody Writer<span>.</span></h1>
+    <p>Find the rhythm as you write.</p></header>
+  <section class="workspace">
+    <div class="draft"><label for="poem">YOUR POEM</label>
+      <textarea id="poem" spellcheck="false" placeholder="Begin with a line…" aria-describedby="privacy">Shall I compare thee to a summer's day?
+Thou art more lovely and more temperate:</textarea>
+      <p id="privacy">Drafts stay in this browser. Scanning sends text to this server.</p>
+    </div>
+    <div class="analysis"><div class="analysis-heading"><h2>Scansion</h2><span id="status" role="status" aria-live="polite">Starting…</span></div>
+      <p class="legend"><span>˘ weak</span><span>´ strong</span><span class="conflict">● constraint violation</span></p>
+      <div id="results"></div>
+    </div>
+  </section>
+  <footer>Powered by full Prosodic 3 · English · lexical stress <span>Scans suggest a reading. Your ear has the final word.</span></footer>
+</main>
+<script src="/static/editor.js"></script>
+</html>
