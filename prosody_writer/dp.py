@@ -218,4 +218,5 @@ class IncrementalDP:
             trace = trace.previous
         syllables.reverse()
         return {'status': 'ok', 'scansion': ''.join('+' if s['meter'] == 's' else '-' for s in syllables),
-                'score': float(best.score), 'violations': counts, 'syllables': syllables}
+                'score': float(best.score), 'violations': counts, 'syllables': syllables,
+                'forms': list(best.forms)}

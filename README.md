@@ -41,6 +41,21 @@ The editor scans automatically after 180 ms without input, shows weak/strong syl
 
 Setup installs signed Debian eSpeak packages without root and NLTK tokenizer data into ignored `.local/`. Prosodic's hardcoded home-data expansion is redirected only during initial import to `.local/prosodic_data`; `HOME` and the installed library are unchanged. Set `PROSODY_DATA_DIR` to choose another writable directory. On other platforms, install eSpeak normally and set `PHONEMIZER_ESPEAK_LIBRARY` if needed. The dependency lock was validated on Python 3.12 in this cloud image.
 
+## What it analyses
+
+Beyond the scansion itself, every scan reports, per line and for the whole poem:
+
+- **Syllables.** The count in the best-scoring reading, and for the poem the total, the average and the shortest and longest line. Words with more than one pronunciation (`temperate`, `heaven`, `every`) are marked, because a different reading changes the count.
+- **Meter.** The scansion is named: iambic, trochaic, anapestic or dactylic, with a foot count (`iambic pentameter`). Common variations are reported rather than counted against the line: a feminine ending, a catalectic last foot, and substituted feet (`foot 1: trochee`, `foot 5: pyrrhic`). Lines too short or too irregular to name say `irregular`. The poem summary shows the dominant meter and how many lines follow it.
+- **Rhyme.** Each line is tagged with a rhyme letter, computed from the end word's last stressed vowel onward, using the pronunciation the scansion chose. Perfect and identical rhymes share a letter. A line left alone is attached to the nearest half rhyme it has (`B~`), either a shared vowel or a shared closing sound, and a line with no echo at all is greyed out. The rhyming syllables are underlined in the line's colour. The summary lists each rhyme sound with its words.
+- **Sound devices.** Alliteration (shared opening consonant on stressed content words) and assonance (a shared stressed vowel), per line. The same word twice counts as repetition, not as a device.
+- **Form.** The scheme and syllable counts are matched against haiku, tanka, limerick, Shakespearean and Petrarchan sonnets, villanelle, terza rima, rhyming couplets and quatrain shapes. A blank line starts a new stanza.
+- **Echoes.** Repeated content words across the poem.
+
+The editor has toggles for rhyme, meter and sound devices, and a button that copies the analysis as plain text. The analysis lives in `prosody_writer/analysis.py` as pure functions over the pronunciation the scanner already chose, so it adds no second parse and is cached per line like the scan.
+
+Rhyme and meter naming are heuristics over the dictionary pronunciation. A word the dictionary stresses differently from how a poet reads it (`temperate` as a rhyme for `date`) can only be caught as a near rhyme.
+
 ## What is incremental
 
 - `dp.py` consumes every pronunciation alternative word by word. Equivalent states merge with backpointers; the Cartesian product of pronunciations is never constructed.
