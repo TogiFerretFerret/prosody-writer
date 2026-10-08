@@ -29,7 +29,7 @@ def editor():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "engine": "prosodic", "version": "3.10.0"}
+    return {"status": "ok", "engine": "prosodic", "version": "3.10.0", "parser": "incremental-dp"}
 
 
 @app.post("/api/scan")

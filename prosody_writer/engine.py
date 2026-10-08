@@ -1,25 +1,40 @@
 """Reuse token pronunciation blocks and completed line results across edits."""
 from functools import lru_cache
+from difflib import SequenceMatcher
 from time import perf_counter
 import pandas as pd
 from .runtime import prosodic
-from .graph import IncrementalMeter
+from .dp import IncrementalDP, Syllable
 from prosodic.words.tokenizers import tokenize_sentwords_iter
 from prosodic.texts.syll_df import build_syll_df
-from prosodic.parsing.vectorized import parse_batch_from_df
-from prosodic.imports import MAX_SYLL_IN_PARSE_UNIT
 
 MAX_LINE_CHARS = 300
+MAX_LINE_SYLLABLES = 128
 
 
 class Scanner:
     def __init__(self):
-        self.meter = IncrementalMeter()
         self.word_builds = 0
         self.line_parses = 0
+        self._previous_lines = []
+        self._dps = []
+        self._current_dp = IncrementalDP()
+        self._dp_work = {}
         # Instance-owned bounded caches: no poetry retained after session eviction.
         self.word_rows = lru_cache(maxsize=2048)(self._word_rows)
+        self.word_forms = lru_cache(maxsize=2048)(self._word_forms)
         self.scan_line = lru_cache(maxsize=256)(self._scan_line)
+
+    def _word_forms(self, text):
+        rows = self.word_rows(text)
+        if not rows or rows[0]['is_punc']:
+            return ()
+        forms = {}
+        for row in rows:
+            if not row['num_forms']:
+                return None
+            forms.setdefault(row['form_idx'], []).append(Syllable.from_row(row))
+        return tuple(tuple(form) for _, form in sorted(forms.items()))
 
     def _word_rows(self, text):
         self.word_builds += 1
@@ -44,47 +59,51 @@ class Scanner:
             return {"status": "empty", "scansion": "", "syllables": []}
         if len(line) > MAX_LINE_CHARS:
             return {"status": "limit", "message": "Split this line into shorter verse lines.", "syllables": []}
-        df = self.frame(line)
-        if df.empty:
-            return {"status": "empty", "scansion": "", "syllables": []}
-        words = df[df.is_punc == 0]
-        unknown = words[words.num_forms == 0].word_txt.unique().tolist()
+        words, unknown = [], []
+        for token in tokenize_sentwords_iter(line):
+            forms = self.word_forms(token['txt'])
+            if forms is None:
+                unknown.append(token['txt'].strip())
+            elif forms:
+                words.append(forms)
         if unknown:
             return {"status": "unknown", "message": "No pronunciation for: " + ", ".join(unknown), "syllables": []}
-        canonical = words[words.form_idx == 0]
-        if len(canonical) < 2:
+        if sum(len(forms[0]) for forms in words) < 2:
             return {"status": "partial", "message": "Keep typing to form a metrical foot.", "syllables": []}
-        # Avoid materializing pathological pronunciation spaces interactively.
-        # Never silently drop variants or return an approximate parse.
-        combinations = 1
-        largest = 0
-        for _, word in words.groupby("word_num", sort=False):
-            lengths = word.groupby("form_idx").size()
-            combinations *= len(lengths)
-            largest += int(lengths.max())
-        if largest > MAX_SYLL_IN_PARSE_UNIT or combinations > 256:
-            return {"status": "limit", "message": "This line exceeds the interactive parsing budget (18 syllables / 256 pronunciation combinations).", "syllables": []}
-        results = parse_batch_from_df(df, self.meter)
-        parses = results.get(1)
-        best = parses.best_parse if parses is not None and len(parses) else None
+        if sum(max(map(len, forms)) for forms in words) > MAX_LINE_SYLLABLES:
+            return {"status": "limit", "message": "This line exceeds the interactive budget of 128 syllables.", "syllables": []}
+        dp = self._current_dp
+        before = dp.transitions
+        best = dp.update(words)
+        self._dp_work['transitions'] += dp.transitions - before
+        self._dp_work['reused_prefix_words'] += dp.reused_words
+        self._dp_work['words_evaluated'] += dp.words_evaluated
+        self._dp_work['peak_states'] = max(self._dp_work['peak_states'], dp.peak_states)
         if best is None:
             return {"status": "partial", "message": "No complete scansion yet.", "syllables": []}
-        syllables = []
-        for position in best.positions:
-            for slot in position.children:
-                syllables.append({"text": slot.unit.txt, "ipa": slot.unit.ipa,
-                                  "stress": bool(slot.unit.is_stressed),
-                                  "meter": position.meter_val,
-                                  "violations": dict(slot.viold)})
-        return {"status": "ok", "scansion": best.meter_str,
-                "score": float(best.score), "violations": dict(best.viold),
-                "syllables": syllables}
+        return best
 
     def update(self, text):
         started = perf_counter()
-        before = self.word_builds, self.line_parses, self.meter.dag.layers_added
-        lines = [{"text": line, **self.scan_line(line)} for line in text.split("\n")]
+        before = self.word_builds, self.line_parses
+        self._dp_work = {'transitions': 0, 'reused_prefix_words': 0,
+                         'words_evaluated': 0, 'peak_states': 0, 'materialized_paths': 0}
+        text_lines = text.split('\n')
+        dps = [None] * len(text_lines)
+        # Preserve a line's frontier when insertions/deletions move it.
+        for tag, old_start, old_end, new_start, new_end in SequenceMatcher(
+                a=self._previous_lines, b=text_lines, autojunk=False).get_opcodes():
+            if tag in ('equal', 'replace'):
+                for old, new in zip(range(old_start, old_end), range(new_start, new_end)):
+                    dps[new] = self._dps[old]
+        lines = []
+        for i, line in enumerate(text_lines):
+            if dps[i] is None:
+                dps[i] = IncrementalDP()
+            self._current_dp = dps[i]
+            lines.append({'text': line, **self.scan_line(line)})
+        self._previous_lines, self._dps = text_lines, dps
         return {"lines": lines, "elapsed_ms": round((perf_counter() - started) * 1000, 2),
                 "work": {"new_words": self.word_builds - before[0],
                          "parsed_lines": self.line_parses - before[1],
-                         "graph_layers_added": self.meter.dag.layers_added - before[2]}}
+                         "graph_layers_added": 0}, 'dp': dict(self._dp_work)}

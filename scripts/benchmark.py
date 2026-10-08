@@ -23,5 +23,10 @@ for line in prefixes:
             _ = parsed_line.best_parse
         full.append((perf_counter() - start) * 1000)
     rows.append({'text': line, 'incremental_ms': round(statistics.median(incremental), 2),
-                 'full_document_ms': round(statistics.median(full), 2), 'work': result['work']})
+                 'full_document_ms': round(statistics.median(full), 2), 'work': result['work'], 'dp': result['dp']})
+scanner = Scanner()
+scanner.update('be ' * 63)
+long_line = scanner.update('be ' * 64)
+rows.append({'text': '63 → 64 ambiguous monosyllables', 'incremental_ms': long_line['elapsed_ms'],
+             'pronunciation_combinations': str(2 ** 64), 'dp': long_line['dp'], 'full_document_ms': None})
 print(json.dumps(rows, indent=2))

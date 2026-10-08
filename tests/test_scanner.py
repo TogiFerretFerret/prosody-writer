@@ -64,7 +64,7 @@ def test_word_data_matches_full_frame():
 
 def test_empty_partial_and_limits():
     s = Scanner()
-    result = s.update("\n \n...\nrose\n" + "rose " * 25)
+    result = s.update("\n \n...\nrose\n" + "rose " * 80)
     assert [l["status"] for l in result["lines"]] == ["empty", "empty", "partial", "partial", "limit"]
 
 
@@ -72,3 +72,24 @@ def test_out_of_dictionary_word_uses_espeak():
     scanner = Scanner()
     df = scanner.frame("florple moon")
     assert df[df.word_txt.str.strip() == "florple"].num_forms.min() > 0
+
+
+def test_more_than_18_syllables_and_exponential_pronunciation_choices():
+    scanner = Scanner()
+    assert len(scanner.word_forms('be ')) == 2
+    # 32 independent binary pronunciations imply 2**32 combinations.
+    result = scanner.update('be ' * 32)
+    assert result['lines'][0]['status'] == 'ok'
+    assert len(result['lines'][0]['syllables']) == 32
+    assert result['dp']['materialized_paths'] == 0
+    assert result['dp']['transitions'] < 20000
+
+
+def test_appended_word_reuses_line_frontier_after_line_insertion():
+    s = Scanner()
+    s.update('To be or\nThe fire is bright')
+    s.update('The moon is bright\nTo be or\nThe fire is bright')
+    r = s.update('The moon is bright\nTo be or not\nThe fire is bright')
+    assert r['work']['parsed_lines'] == 1
+    assert r['dp']['reused_prefix_words'] == 3
+    assert r['dp']['words_evaluated'] == 1

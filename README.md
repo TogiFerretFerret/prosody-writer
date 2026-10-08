@@ -1,12 +1,28 @@
 # Prosody Writer
 
-A first realtime poetry editor powered by the **full Python Prosodic 3.10.0 library**, including its pronunciation alternatives, syllabification, constraint scoring, and harmonic bounding. English lexical stress is enabled. Optional sentence-level syntax models are not installed in this first prototype.
+A realtime poetry editor using the **full Python Prosodic 3.10.0 library** for pronunciations, syllabification, and lexical features, with an incremental DP for its default English grammar. It selects the best weighted scan with Prosodic's tie breakers, without enumerating all scansions or pronunciation combinations. Optional syntax models, configurable grammars, and enumeration of every unbounded alternative are not implemented.
+
+## Run locally on Asahi Linux (aarch64)
+
+For Fedora Asahi Remix, install Python 3.12 and the native pronunciation library:
+
+```sh
+sudo dnf install python3.12 espeak-ng
+git clone https://github.com/TogiFerretFerret/prosody-writer.git
+cd prosody-writer
+PYTHON_BIN=python3.12 bash scripts/setup.sh
+.venv/bin/python -m uvicorn prosody_writer.app:app --port 8000
+```
+
+Open **http://localhost:8000** in your browser. Stop the server with Ctrl-C. For subsequent runs, only the final command is needed. To update an existing checkout, run `git pull` and rerun setup before starting the server. Debian/Ubuntu users should install Python 3.12 with venv support and `espeak-ng` through apt instead of dnf. The pinned native Python dependencies publish Linux aarch64 wheels for Python 3.12; execution on Asahi hardware has not been tested here.
 
 ## Run in GitHub Codespaces
 
-Push these files to the repository, then choose **Code → Codespaces → Create codespace** on GitHub. The included `.devcontainer` installs Python 3.12 and eSpeak, installs the pinned Python dependencies, and starts the app automatically. Open **Prosody Writer / port 8000** from the Codespace's **Ports** tab. Keep the forwarded port private; Codespaces handles authenticated access. Reopening a stopped Codespace restarts the server.
+Choose **Code → Codespaces → Create codespace** on GitHub. The included `.devcontainer` installs Python 3.12 and eSpeak, installs the pinned Python dependencies, and starts the app automatically. Open **Prosody Writer / port 8000** from the Codespace's **Ports** tab. Keep the forwarded port private; Codespaces handles authenticated access. Reopening a stopped Codespace restarts the server.
 
 If the preview does not open automatically, run `bash scripts/start-background.sh` and open port 8000 from the Ports tab. Server logs are in `.local/server.log`.
+
+After pulling an update in an existing Codespace, run `bash scripts/setup.sh` followed by `bash scripts/start-background.sh --restart` to reload the running server.
 
 ## Develop
 
@@ -27,14 +43,16 @@ Setup installs signed Debian eSpeak packages without root and NLTK tokenizer dat
 
 ## What is incremental
 
-- `graph.py` implements an append-only DAG keyed by syllable offset and previous metrical position. A new syllable layer adds a bounded number of nodes/edges for fixed strong/weak position limits. Shortening a line retains layers for later reuse.
-- `IncrementalMeter` replaces Prosodic's candidate enumeration through its meter extension point. The graph produces the same candidates **in the same order**, preserving tie breaking. No reduced dictionary or simplified scoring engine is substituted.
+- `dp.py` consumes every pronunciation alternative word by word. Equivalent states merge with backpointers; the Cartesian product of pronunciations is never constructed.
+- Word-boundary checkpoints retain the preceding frontier. Append resumes there; deletion or a mid-line edit rolls back to the first changed word. Insertions/deletions of lines preserve other lines' frontiers.
+- Scoring matches Prosodic's six default constraints with unit weights and strong/weak position sizes capped at two. The state also retains the last three metrical values, period-2/3 match counts, a pseudo-foot type bitset, open-position context, and syllable count, preserving Prosodic's nonlocal tie breakers.
+- All weights are strictly positive, so a global minimum score cannot be harmonically bounded. Selecting the best scan therefore does not require computing the entire Pareto frontier. Paths with worse `(score, strong-resolution count)` in an equivalent scoring state cannot recover after append; tied paths merge only when their remaining ranking state is equivalent.
 - Each session caches pronunciation blocks by token and results by line. Editing a line reuses other lines, including after insertion or deletion. A changed final word gets a fresh pronunciation; existing words remain cached.
 - The browser coalesces updates, keeps at most one request in flight, and discards results for older revisions. The server serializes parsing, bounds sessions and caches, and refuses overload.
 
-**Graph extension is constant work per new syllable, but a full scan is not constant time.** Materializing candidate paths and evaluating/pooling pronunciations still runs again for the changed line. Prosodic 3's parser is vectorized; graph construction is not assumed to be its sole bottleneck. Document splitting and response assembly also scale with document size. This prototype establishes a tested integration seam for further optimization rather than claiming an exact constant-time parser.
+**No exponential path materialization remains in the editor's parsing path.** For this fixed grammar, the state space is polynomial: three bounded-by-line-length counters (syllable count and two regularity counts), a constant-size foot bitset, and finite boundary context. It is not constant time in the worst case: the frontier can grow, changed suffixes need recomputation, and reconstructing the displayed scan costs linear time. Lexical lookup and tokenization also contribute to end-to-end latency. `graph.py` remains as a reference enumerator for tests, outside the editor's hot path.
 
-The interactive budget is at most 18 syllables across every pronunciation, 256 pronunciation combinations, 300 characters per line, and 200 lines / 12,000 characters per request. Over-budget lines display a limit message rather than silently approximating. A single syllable displays a provisional message until a foot can be scanned.
+The interactive budget is 128 syllables across every pronunciation, 300 characters per line, and 200 lines / 12,000 characters per request. There is no pronunciation-combination cap. Over-budget lines display a limit message rather than silently approximating. A single canonical syllable displays a provisional message until a foot can be scanned. The API reports DP transitions, reused prefix words, peak states, and zero materialized candidate paths.
 
 ## Verify and measure
 
@@ -43,6 +61,4 @@ The interactive budget is at most 18 syllables across every pronunciation, 256 p
 .venv/bin/python scripts/benchmark.py
 ```
 
-Tests compare graph candidates, best scansions, scores, violation counts, and chosen pronunciations with fresh full Prosodic parses. They also cover edit sequences, empty input, limits, API behavior, and an invented word that requires eSpeak.
-
-Next optimization: profile the edited-line pronunciation pooling and constraint evaluation, retain sufficient boundary state and violation vectors, and compare every incremental update against a cold parse. Pruning only the current winning parse is unsafe: an appended syllable can change the winner, position boundaries, and harmonic bounding. A true scoring frontier needs an equivalence proof or explicit fallback for nonlocal constraints and pronunciation changes.
+Tests compare best scansions, scores, violation counts, and chosen pronunciations with full Prosodic, including 150 seeded synthetic pronunciation lattices. They cover append/rollback, checkpoint identity, line movement, input limits, API behavior, an invented word requiring eSpeak, and 32 independent binary pronunciations (2**32 combinations) without path enumeration. The benchmark also measures append at 64 binary-ambiguous words. Full-parser comparisons remain within its 18-syllable/4096-combination limits; longer lines test DP invariants instead. Never infer compatibility with fitted zone weights, zero/negative weights, phrasal stress, or arbitrary extra constraints from these tests.

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python scripts/build_preview.py
-python -m venv .venv
+python_bin="${PYTHON_BIN:-python3}"
+"$python_bin" scripts/build_preview.py
+"$python_bin" -m venv .venv
 .venv/bin/python -m pip install --no-cache-dir -r requirements.lock
 .venv/bin/python -m pip install --no-cache-dir --no-deps -e .
 mkdir -p .local/nltk_data
@@ -14,15 +15,15 @@ for package in ('punkt', 'punkt_tab'):
         raise SystemExit(f'Could not install {package}')
 PY
 
-# Rootless native setup for this Debian amd64 cloud image. Apt verifies signed
+# Rootless native setup for Debian amd64/arm64 images. Apt verifies signed
 # archive metadata and package hashes; do not substitute unverified downloads.
-if [[ -f /etc/debian_version && "$(uname -m)" == x86_64 ]] && ! .venv/bin/python - <<'PY'
+if [[ -f /etc/debian_version && -f /usr/share/keyrings/debian-archive-keyring.gpg ]] && ! .venv/bin/python - <<'PY'
 import ctypes.util, sys
 sys.exit(0 if ctypes.util.find_library('espeak-ng') or ctypes.util.find_library('espeak') else 1)
 PY
 then
     mkdir -p .local/apt/lists/partial .local/apt/cache/archives/partial .local/downloads
-    debian_suite=$(python -c 'import platform; print(platform.freedesktop_os_release()["VERSION_CODENAME"])')
+    debian_suite=$(.venv/bin/python -c 'import platform; print(platform.freedesktop_os_release()["VERSION_CODENAME"])')
     printf '%s\n' "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://deb.debian.org/debian $debian_suite main" > .local/apt/sources.list
     apt_opts=(-o "Dir::Etc::sourcelist=$PWD/.local/apt/sources.list" -o Dir::Etc::sourceparts=-
               -o "Dir::State::lists=$PWD/.local/apt/lists" -o "Dir::Cache=$PWD/.local/apt/cache")

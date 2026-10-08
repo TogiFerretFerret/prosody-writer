@@ -3,6 +3,25 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .local
 
+if [[ "${1:-}" == --restart && -f .local/server.pid ]]; then
+    .venv/bin/python - <<'PY'
+import os, signal, subprocess, time
+from pathlib import Path
+pid_text = Path('.local/server.pid').read_text().strip()
+if pid_text.isdigit():
+    pid = int(pid_text)
+    args = subprocess.run(['ps', '-p', str(pid), '-o', 'args='], capture_output=True, text=True).stdout
+    if 'uvicorn prosody_writer.app:app' in args:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(.1)
+PY
+fi
+
 # Reconnecting/restarting a Codespace should not launch another server.
 if .venv/bin/python - <<'PY'
 import json, sys, urllib.request
